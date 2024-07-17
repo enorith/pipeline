@@ -4,6 +4,11 @@ import (
 	"sync"
 )
 
+var (
+	TypeString = "string"
+	TypeInt    = "int"
+)
+
 type Option struct {
 	Label string      `json:"label"`
 	Value interface{} `json:"value"`
