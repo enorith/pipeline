@@ -1,10 +1,36 @@
 package action
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 type ActionParam interface {
 	GetType() string
 	GetValue() interface{}
+}
+
+type ReflectActionParam struct {
+	value interface{}
+	typ   reflect.Type
+}
+
+func (ra *ReflectActionParam) GetType() string {
+	if ra.typ == nil {
+		ra.typ = reflect.TypeOf(ra.value)
+	}
+
+	return ra.typ.String()
+}
+
+func (ra *ReflectActionParam) GetValue() interface{} {
+	return ra.value
+}
+
+func NewParamReflect(value interface{}) *ReflectActionParam {
+	return &ReflectActionParam{
+		value: value,
+	}
 }
 
 type SimpleActionParam struct {

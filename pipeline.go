@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -10,8 +11,9 @@ import (
 )
 
 const (
-	WPDefaultSize   = 20
-	WPDefaultBuffer = 1000
+	WPDefaultSize          = 20
+	WPDefaultBuffer        = 1000
+	WPDefaultActionTimeout = 30 * time.Second
 )
 
 type Input struct {
@@ -27,6 +29,15 @@ type Node struct {
 	InvokeCount int           `json:"invokeCount"`
 }
 
+type NodeError struct {
+	Err    error
+	NodeId string
+}
+
+func (e NodeError) Error() string {
+	return fmt.Sprintf("node %s error: %s", e.NodeId, e.Err.Error())
+}
+
 type Collection struct {
 	nodes   map[string]*Node
 	results map[string][]action.ActionParam
@@ -35,10 +46,10 @@ type Collection struct {
 }
 
 type PlayConfig struct {
-	WPSize       int
-	WPBuffer     int
-	NodeTimeOut  time.Duration
-	TargetNodeId string
+	WPSize        int
+	WPBuffer      int
+	ActionTimeOut time.Duration
+	TargetNodeId  string
 }
 
 type PlayConfigFn func(config *PlayConfig)
@@ -49,12 +60,19 @@ func PlayWithTargetId(id string) PlayConfigFn {
 	}
 }
 
+func PlayWithActionTimeout(timeout time.Duration) PlayConfigFn {
+	return func(config *PlayConfig) {
+		config.ActionTimeOut = timeout
+	}
+}
+
 // Play the pipeline
-func (c *Collection) Play(config ...PlayConfigFn) {
+func (c *Collection) Play(config ...PlayConfigFn) ([]action.ActionParam, error) {
 
 	var conf = &PlayConfig{
-		WPSize:   WPDefaultSize,
-		WPBuffer: WPDefaultBuffer,
+		WPSize:        WPDefaultSize,
+		WPBuffer:      WPDefaultBuffer,
+		ActionTimeOut: WPDefaultActionTimeout,
 	}
 
 	for _, fn := range config {
@@ -85,7 +103,7 @@ func (c *Collection) Play(config ...PlayConfigFn) {
 
 	defer pool.StopAndWait()
 
-	c.callNode(targetNodeId, targetNode, pool)
+	return c.callNode(targetNodeId, targetNode, pool, conf)
 }
 
 type callResult struct {
@@ -95,7 +113,7 @@ type callResult struct {
 	inputType, refNId   string
 }
 
-func (c *Collection) callNode(id string, node *Node, pool *pond.WorkerPool) ([]action.ActionParam, error) {
+func (c *Collection) callNode(id string, node *Node, pool *pond.WorkerPool, conf *PlayConfig) ([]action.ActionParam, error) {
 	mu := c.mu
 	mu.RLock()
 	if res, ok := c.results[id]; ok && node.Sigleton {
@@ -120,7 +138,7 @@ func (c *Collection) callNode(id string, node *Node, pool *pond.WorkerPool) ([]a
 				outputIdx := idx
 				refNId := refNodeId
 				group.Submit(func() {
-					ots, e := c.callNode(refNId, refNode, pool)
+					ots, e := c.callNode(refNId, refNode, pool, conf)
 					resChan <- callResult{
 						outputs:   ots,
 						err:       e,
@@ -155,15 +173,24 @@ func (c *Collection) callNode(id string, node *Node, pool *pond.WorkerPool) ([]a
 	}
 
 	node.InvokeCount++
-	returns, e := node.Action.Handle(params...)
+	ctx, cancel := context.WithTimeout(context.Background(), conf.ActionTimeOut)
 
-	if node.Sigleton {
+	defer cancel()
+	returns, e := node.Action.Handle(ctx, params...)
+
+	if node.Sigleton && e == nil {
 		mu.Lock()
 		c.results[id] = returns
 		mu.Unlock()
 	}
 
-	return returns, e
+	if e != nil {
+		return nil, NodeError{
+			NodeId: id,
+			Err:    e,
+		}
+	}
+	return returns, nil
 }
 
 func (c *Collection) GetNodes() map[string]*Node {

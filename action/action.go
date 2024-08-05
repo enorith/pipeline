@@ -1,12 +1,13 @@
 package action
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 )
 
 type Action interface {
-	Handle(params ...ActionParam) ([]ActionParam, error)
+	Handle(ctx context.Context, params ...ActionParam) ([]ActionParam, error)
 	InputTypes() []string
 	OutputTypes() []string
 }
@@ -21,7 +22,7 @@ type FuncAction struct {
 	outputParsed bool
 }
 
-func (f *FuncAction) Handle(params ...ActionParam) ([]ActionParam, error) {
+func (f *FuncAction) Handle(ctx context.Context, params ...ActionParam) ([]ActionParam, error) {
 	if f.fnType.Kind() != reflect.Func {
 		return nil, fmt.Errorf("action error: not a function")
 	}

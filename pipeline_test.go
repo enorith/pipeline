@@ -1,12 +1,43 @@
 package pipeline_test
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/enorith/pipeline"
 	"github.com/enorith/pipeline/action"
 )
+
+type EchoAction struct {
+}
+
+func (t *EchoAction) Handle(ctx context.Context, params ...action.ActionParam) ([]action.ActionParam, error) {
+	done := make(chan struct{})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("action timeout")
+		default:
+			go func() {
+				time.Sleep(3 * time.Second)
+				done <- struct{}{}
+			}()
+		case <-done:
+			return params, nil
+		}
+	}
+}
+
+func (t *EchoAction) InputTypes() []string {
+	return []string{"any"}
+}
+
+func (t *EchoAction) OutputTypes() []string {
+	return []string{"any"}
+}
 
 func TestPlay(t *testing.T) {
 	coll := pipeline.NewCollection(map[string]*pipeline.Node{
@@ -15,6 +46,19 @@ func TestPlay(t *testing.T) {
 				time.Sleep(time.Second)
 				return "foo " + time.Now().Format("2006-01-02 15:04:05")
 			}),
+			Outputs:  []string{"string"},
+			Sigleton: true,
+		},
+		"mid": {
+			Action: &EchoAction{},
+			Inputs: []pipeline.Input{
+				{
+					Type: "string",
+					From: map[string]int{
+						"input": 0,
+					},
+				},
+			},
 			Outputs:  []string{"string"},
 			Sigleton: true,
 		},
@@ -61,7 +105,13 @@ func TestPlay(t *testing.T) {
 		},
 	})
 
-	coll.Play()
+	res, e := coll.Play(pipeline.PlayWithTargetId("mid"))
+
+	if e != nil {
+		t.Fatal(e)
+	}
+
+	t.Log(res[0].GetValue())
 	// js, _ := json.MarshalIndent(coll.GetNodes(), "", "  ")
 	// fmt.Println(string(js))
 }
